@@ -1,0 +1,17 @@
+﻿Abbreviation,ID,Name
+SARC,30,Sarcoma
+BLCA,28,Bladder Urothelial Carcinoma
+GBM,1,Glioblastoma multiforme
+LUSC,3,Lung squamous cell carcinoma
+OV,2,Ovarian serous cystadenocarcinoma
+LUAD,4,Lung adenocarcinoma
+BRCA,5,Breast invasive carcinoma
+COAD,6,Colon adenocarcinoma
+KIRC,7,Kidney renal clear cell carcinoma
+KIRP,8,Kidney renal papillary cell carcinoma
+STAD,9,Stomach adenocarcinoma
+HNSC,10,Head and Neck squamous cell carcinoma
+LIHC,11,Liver hepatocellular carcinoma
+CESC,12,Cervical squamous cell carcinoma and endocervical adenocarcinoma
+LAML,13,Acute Myeloid Leukemia
+SKCM,15,Skin Cutaneous Melanoma
