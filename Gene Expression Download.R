@@ -154,7 +154,7 @@ for (i in 1:length(tumorIDs)) {
 
 ##### Sanity Check #####
 
-for (i in i:length(tumorIDs)) {
+for (i in 1:length(tumorIDs)) {
   
   #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
   if (file.exists(paste0("SavedData\\DESeqData\\TCGA-",tumorIDs[i],"-DSD.rda"))) {
