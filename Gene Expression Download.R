@@ -30,6 +30,11 @@ tumorIDs = as.character(tumorTypes$Abbreviation)
 
 
 ##### Download ALL the data!! #####
+
+#Create the necessary directories for saving data.
+dir.create("SavedData/GeneExpression")
+dir.create("SavedData/Clinical")
+
 for (i in 1:length(tumorIDs)) {
   
   ##### Get Gene Expression data.
@@ -47,7 +52,7 @@ for (i in 1:length(tumorIDs)) {
   expressionData = as.data.table(assay(data[,data$shortLetterCode == "TP"]),keep.rownames = TRUE)
   
   # Save the results.
-  save(expressionData, file = paste0("SavedData\\GeneExpression\\TCGA-",tumorIDs[i],"-GE.rda"))
+  save(expressionData, file = paste0("SavedData/GeneExpression/TCGA-",tumorIDs[i],"-GE.rda"))
 
   ##### Get Clinical data.
   
@@ -56,19 +61,23 @@ for (i in 1:length(tumorIDs)) {
                     file.type = "xml")
   GDCdownload(query)
   clinical <- as.data.table(GDCprepare_clinic(query, clinical.info = "patient"))
-  save(clinical, file = paste0("SavedData\\Clinical\\TCGA-",tumorIDs[i],"-C.rda"))
+  save(clinical, file = paste0("SavedData/Clinical/TCGA-",tumorIDs[i],"-C.rda"))
     
 }
 
 
 
 ##### Format Data #####
+
+#Create the necessary directory for saving data.
+dir.create("SavedData/SizeAndGeneExpression")
+
 for (i in 1:length(tumorIDs)) {
   
   ##### Load in Clinical and Gene Expression data
   
-  load(paste0("SavedData\\GeneExpression\\TCGA-",tumorIDs[i],"-GE.rda"))
-  load(paste0("SavedData\\Clinical\\TCGA-",tumorIDs[i],"-C.rda"))
+  load(paste0("SavedData/GeneExpression/TCGA-",tumorIDs[i],"-GE.rda"))
+  load(paste0("SavedData/Clinical/TCGA-",tumorIDs[i],"-C.rda"))
 
   ##### Format Clinical Data
 
@@ -115,7 +124,7 @@ for (i in 1:length(tumorIDs)) {
     sizeAndExpressionData = clinical[expressionData, nomatch=0]
 
     #Save the new data set.
-    save(sizeAndExpressionData, file = paste0("SavedData\\SizeAndGeneExpression\\TCGA-",tumorIDs[i],"-CGE.rda"))
+    save(sizeAndExpressionData, file = paste0("SavedData/SizeAndGeneExpression/TCGA-",tumorIDs[i],"-CGE.rda"))
 
   }
   
@@ -124,13 +133,17 @@ for (i in 1:length(tumorIDs)) {
 
 
 ##### Set up for DESeq #####
+
+#Create the necessary directory for saving data.
+dir.create("SavedData/DESeqRawData")
+
 for (i in 1:length(tumorIDs)) {
   
   #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
-  if (file.exists(paste0("SavedData\\SizeAndGeneExpression\\TCGA-",tumorIDs[i],"-CGE.rda"))) {
+  if (file.exists(paste0("SavedData/SizeAndGeneExpression/TCGA-",tumorIDs[i],"-CGE.rda"))) {
   
     # Load in Data
-    load(paste0("SavedData\\SizeAndGeneExpression\\TCGA-",tumorIDs[i],"-CGE.rda"))
+    load(paste0("SavedData/SizeAndGeneExpression/TCGA-",tumorIDs[i],"-CGE.rda"))
     
     # Split up the data
     sizeData = sizeAndExpressionData[,.(bcr_patient_barcode,stage_event_tnm_categories)]
@@ -146,7 +159,7 @@ for (i in 1:length(tumorIDs)) {
                                  design = ~ stage_event_tnm_categories,
                                  tidy = TRUE)
     
-    save(DESeqData, file = paste0("SavedData\\DESeqData\\TCGA-",tumorIDs[i],"-DSD.rda"))
+    save(DESeqData, file = paste0("SavedData/DESeqRawData/TCGA-",tumorIDs[i],"-DSD.rda"))
     
   }
   
@@ -157,11 +170,11 @@ for (i in 1:length(tumorIDs)) {
 for (i in 1:length(tumorIDs)) {
   
   #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
-  if (file.exists(paste0("SavedData\\DESeqData\\TCGA-",tumorIDs[i],"-DSD.rda"))) {
+  if (file.exists(paste0("SavedData/DESeqRawData/TCGA-",tumorIDs[i],"-DSD.rda"))) {
     
     #Load in DESeq Data and clinical data
-    load(paste0("SavedData\\DESeqData\\TCGA-",tumorIDs[i],"-DSD.rda"))
-    load(paste0("SavedData\\Clinical\\TCGA-",tumorIDs[i],"-C.rda"))
+    load(paste0("SavedData/DESeqData/TCGA-",tumorIDs[i],"-DSD.rda"))
+    load(paste0("SavedData/Clinical/TCGA-",tumorIDs[i],"-C.rda"))
     
     #Get just the patient barcodes from each set.
     colDataBarcodes = colData(DESeqData)$bcr_patient_barcode
@@ -182,24 +195,72 @@ for (i in 1:length(tumorIDs)) {
 for (i in 1:length(tumorIDs)) {
   
   #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
-  if (file.exists(paste0("SavedData\\DESeqData\\TCGA-",tumorIDs[i],"-DSD.rda"))) {
+  if (file.exists(paste0("SavedData/DESeqData/TCGA-",tumorIDs[i],"-DSD.rda"))) {
   
     #Load in DESeq Data
-    load(paste0("SavedData\\DESeqData\\TCGA-",tumorIDs[i],"-DSD.rda"))
+    load(paste0("SavedData/DESeqData/TCGA-",tumorIDs[i],"-DSD.rda"))
     
     #Run it!
     DESeqResults = DESeq(DESeqData,parallel = TRUE, BPPARAM = SnowParam(7))
     
     #Save the results
-    save(DESeqResults, file = paste0("SavedData\\DESeqData\\TCGA-",tumorIDs[i],"-DSR.rda"))
-    
-    #results = results(DESeqResults, contrast = c("stage_event_tnm_categories","T2","T3"))
-    #
-    #DESeqResultsTable = as.data.table(results)[,Gene := expressionData[1:10,Gene]]
-    #setcolorder(DESeqResultsTable,c(7,1:6))
+    save(DESeqResults, file = paste0("SavedData/DESeqRawData/TCGA-",tumorIDs[i],"-DSR.rda"))
   
   }
   
-  # Cluster Profiler?  GG Plot?  
+}
+
+# Analyze Results
+# padj cutoff: < 0.05
+# increase cutoff: > log(1.5) = ~0.58
+# Intersect T1 vs T2 and T1 vs T3
+# What genes are consistently upregulated across tumor types?
+# How can we group tumor types biologically?  (Tissue type?  Mesenchyme vs epithelial?)
+
+# Create the necessary Directory for saving data.
+dir.create("SavedData/DESeqRefinedData")
+
+# A nice function for creating results from different comparisons
+createRefinedResultsTable = function(DESeqResults, genes, size1, size2) {
+  
+  #Get the results for the indicated comparison
+  results = results(DESeqResults, contrast = c("stage_event_tnm_categories",size1,size2))
+  
+  #Convert the results to a data.table and add the column for gene ID's.
+  DESeqResultsTable = as.data.table(results)[,Gene := genes]
+  setcolorder(DESeqResultsTable,c(7,1:6))
+  
+  #Remove insignificant changes and small changes.
+  DESeqResultsTable = DESeqResultsTable[padj < 0.05 & abs(log2FoldChange) > 0.58]
+  
+  return(DESeqResultsTable)
   
 }
+
+for (i in 1:length(tumorIds)) {
+  
+  #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
+  if (file.exists(paste0("SavedData/DESeqRawData/TCGA-",tumorIDs[i],"-DSR.rda"))) {
+    
+    #Load in DESeq Results
+    load(paste0("SavedData/DESeqRawData/TCGA-",tumorIDs[i],"-DSR.rda"))
+    load(paste0("SavedData/SizeAndGeneExpression/TCGA-",tumorIDs[i],"-CGE.rda"))
+    
+    #Create the comparison tables
+    T1vsT2 = createRefinedResultsTable(DESeqResults, colnames(sizeAndExpressionData)[-(1:2)], "T1", "T2")
+    T1vsT3 = createRefinedResultsTable(DESeqResults, colnames(sizeAndExpressionData)[-(1:2)], "T1", "T3")
+    T2vsT3 = createRefinedResultsTable(DESeqResults, colnames(sizeAndExpressionData)[-(1:2)], "T2", "T3")
+    
+    #Create a sub-directory to save the tables in.
+    dir.create(paste0("SavedData/DESeqRefinedData/",tumorIDs[i]))
+    
+    #Save the tables
+    save(T1vsT2, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT2.rda"))
+    save(T1vsT3, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT3.rda"))
+    save(T2vsT3, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T2vsT3.rda"))
+    
+  }
+  
+}
+
+# DAVID? Cluster Profiler?  GG Plot?  SEUART?
