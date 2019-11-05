@@ -6,6 +6,9 @@
 #Then, run DESeq analysis on the data.
 
 
+
+##### Set Up the Environment #####
+
 #Ensure that BiocManager is installed
 if (!requireNamespace("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
@@ -111,7 +114,8 @@ for (i in 1:length(tumorIDs)) {
     expressionData = melt(expressionData, id.vars = "Gene", variable.name = "Patient_Barcode", value.name = "Counts")
     expressionData = dcast(expressionData, Patient_Barcode ~ Gene, value.var = "Counts")
     
-    #Truncate patient barcode to be consistent with clinical data, then remove duplicated barcodes and set barcode as the key.
+    #Truncate patient barcode to be consistent with clinical data.  
+    #Then, remove duplicated barcodes and set barcode as the key.
     expressionData[,Patient_Barcode := substr(Patient_Barcode,1,12)]
     expressionData = expressionData[isUnique(expressionData[,Patient_Barcode])]
     setkey(expressionData,Patient_Barcode)
@@ -150,7 +154,8 @@ for (i in 1:length(tumorIDs)) {
     expressionData = sizeAndExpressionData[,!"stage_event_tnm_categories"]
     
     # Re-Transpose expression data to work with DeSeq
-    expressionData = melt(expressionData, id.vars = "bcr_patient_barcode", variable.name = "Gene", value.name = "Counts")
+    expressionData = melt(expressionData, id.vars = "bcr_patient_barcode", 
+                          variable.name = "Gene", value.name = "Counts")
     expressionData = dcast(expressionData, Gene ~ bcr_patient_barcode, value.var = "Counts")
     
     # Create the DESeqDataSet object, and save it.
@@ -191,6 +196,8 @@ for (i in 1:length(tumorIDs)) {
   
 }
 
+
+
 ##### Run DESeq #####
 for (i in 1:length(tumorIDs)) {
   
@@ -224,7 +231,8 @@ dir.create("SavedData/DESeqRefinedData")
 createRefinedResultsTable = function(DESeqResults, genes, size1, size2) {
   
   #Get the results for the indicated comparison
-  results = results(DESeqResults, contrast = c("stage_event_tnm_categories",size1,size2), parallel = TRUE, BPPARAM = SnowParam(7))
+  results = results(DESeqResults, contrast = c("stage_event_tnm_categories",size1,size2), 
+                    parallel = TRUE, BPPARAM = SnowParam(7))
   
   #Convert the results to a data.table and add the column for gene ID's.
   DESeqResultsTable = as.data.table(results)[,Gene := genes]
@@ -237,6 +245,9 @@ createRefinedResultsTable = function(DESeqResults, genes, size1, size2) {
   
 }
 
+
+
+##### Refine Results #####
 for (i in 1:length(tumorIDs)) {
   
   #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
@@ -251,6 +262,19 @@ for (i in 1:length(tumorIDs)) {
     T1vsT3 = createRefinedResultsTable(DESeqResults, colnames(sizeAndExpressionData)[-(1:2)], "T1", "T3")
     T2vsT3 = createRefinedResultsTable(DESeqResults, colnames(sizeAndExpressionData)[-(1:2)], "T2", "T3")
     
+    #Intersect T1vsT2 and T1vsT3 to get the genes that are consistently differentially expressed in large tumors.
+    setkey(T1vsT2,Gene)
+    setkey(T1vsT3,Gene)
+    setkey(T2vsT3,Gene)
+    
+    T1vsT2IntersectT1vsT3 = T1vsT2[T1vsT3, nomatch = 0]
+    
+    #Format column names
+    invisible(sapply(colnames(T1vsT2IntersectT1vsT3)[2:7], function(X)
+      setnames(T1vsT2IntersectT1vsT3,old = X, new = paste0("T1vsT2.",X))))
+    invisible(sapply(colnames(T1vsT2IntersectT1vsT3)[8:13], function(X)
+      setnames(T1vsT2IntersectT1vsT3,old = X, new = paste0("T1vsT3",substr(X,2,1000)))))
+    
     #Create a sub-directory to save the tables in.
     dir.create(paste0("SavedData/DESeqRefinedData/",tumorIDs[i]))
     
@@ -258,9 +282,59 @@ for (i in 1:length(tumorIDs)) {
     save(T1vsT2, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT2.rda"))
     save(T1vsT3, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT3.rda"))
     save(T2vsT3, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T2vsT3.rda"))
+    save(T1vsT2IntersectT1vsT3, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT2_Intersect_T1vsT3.rda"))
     
   }
   
 }
+
+
+
+##### Analyze Results Across Tumor Types ######
+
+# Make the base frequency table
+intersectionFrequencyTable = data.table(Gene=character(),Count=integer())
+setkey(intersectionFrequencyTable,Gene)
+
+# Generate the frequency table
+for (i in 1:length(tumorIDs)) {
+  
+  #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
+  if (file.exists(paste0("SavedData/DESeqRefinedData/",tumorIDs[i]))) {
+    
+    #Load in intersection table
+    load(paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT2_Intersect_T1vsT3.rda"))
+    
+    #Add any new genes to the frequency table.
+    intersectionFrequencyTable = merge(intersectionFrequencyTable,T1vsT2IntersectT1vsT3[,.(Gene)], all=TRUE)
+    
+    #Increment gene counts based on genes in the current tumor type.
+    intersectionFrequencyTable[intersectionFrequencyTable[,Gene] %in% T1vsT2IntersectT1vsT3[,Gene],
+                               Count := Count + 1]
+    intersectionFrequencyTable[is.na(Count),
+                               Count := 1]
+    
+    #Indicate which genes were found in this tumor type.
+    intersectionFrequencyTable[intersectionFrequencyTable[,Gene] %in% T1vsT2IntersectT1vsT3[,Gene],
+                               tumorIDs[i] := TRUE]
+
+  }
+   
+}
+
+# Replace NA's with FALSE.
+for (i in 1:length(tumorIDs)) {
+  
+  if (tumorIDs[i] %in% colnames(intersectionFrequencyTable)) {
+    intersectionFrequencyTable[is.na(intersectionFrequencyTable[,tumorIDs[i],with = FALSE])[,1],tumorIDs[i] := FALSE]
+  }
+  
+}
+
+# Order the results by most common genes
+setorder(intersectionFrequencyTable,-Count)
+
+#Save the result
+save(intersectionFrequencyTable, file = "SavedData/DESeqRefinedData/IntersectionFrequencyTable.rda")
 
 # DAVID? Cluster Profiler?  GG Plot?  SEUART?
