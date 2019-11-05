@@ -224,7 +224,7 @@ dir.create("SavedData/DESeqRefinedData")
 createRefinedResultsTable = function(DESeqResults, genes, size1, size2) {
   
   #Get the results for the indicated comparison
-  results = results(DESeqResults, contrast = c("stage_event_tnm_categories",size1,size2))
+  results = results(DESeqResults, contrast = c("stage_event_tnm_categories",size1,size2), parallel = TRUE, BPPARAM = SnowParam(7))
   
   #Convert the results to a data.table and add the column for gene ID's.
   DESeqResultsTable = as.data.table(results)[,Gene := genes]
