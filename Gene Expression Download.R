@@ -237,7 +237,7 @@ createRefinedResultsTable = function(DESeqResults, genes, size1, size2) {
   
 }
 
-for (i in 1:length(tumorIds)) {
+for (i in 1:length(tumorIDs)) {
   
   #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
   if (file.exists(paste0("SavedData/DESeqRawData/TCGA-",tumorIDs[i],"-DSR.rda"))) {
