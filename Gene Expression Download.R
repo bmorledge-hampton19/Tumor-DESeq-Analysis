@@ -15,12 +15,18 @@ if (!requireNamespace("BiocManager", quietly = TRUE))
 BiocManager::install()
 BiocManager::install("TCGAbiolinks")
 BiocManager::install("DESeq2")
+BiocManager::install("clusterProfiler")
+BiocManager::install("org.Hs.eg.db")
 
 #Include libraries
 library(TCGAbiolinks)
 library(DESeq2)
+library(clusterProfiler)
 library(SummarizedExperiment)
 library(data.table)
+library(org.Hs.eg.db)
+library(biomaRt)
+library(GO.db)
 
 #Ensure arallelization
 library(BiocParallel)
@@ -217,12 +223,9 @@ for (i in 1:length(tumorIDs)) {
   
 }
 
-# Analyze Results
-# padj cutoff: < 0.05
-# increase cutoff: > log(1.5) = ~0.58
-# Intersect T1 vs T2 and T1 vs T3
-# What genes are consistently upregulated across tumor types?
-# How can we group tumor types biologically?  (Tissue type?  Mesenchyme vs epithelial?)
+
+
+##### Refine Results #####
 
 # Create the necessary Directory for saving data.
 dir.create("SavedData/DESeqRefinedData")
@@ -245,9 +248,6 @@ createRefinedResultsTable = function(DESeqResults, genes, size1, size2) {
   
 }
 
-
-
-##### Refine Results #####
 for (i in 1:length(tumorIDs)) {
   
   #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
@@ -288,7 +288,81 @@ for (i in 1:length(tumorIDs)) {
   
 }
 
+##### Biologically relevant analysis #####
 
+generateHeatMap = function(genes, geneOntologyCategory, foldChange) {
+  
+  geneOntologyResults = enrichGO(genes, 'org.Hs.eg.db', 
+                                 keyType = "ENSEMBL", ont=geneOntologyCategory, pvalueCutoff = 0.1)
+  
+  if(missing(foldChange)) {
+    heatplot(setReadable(geneOntologyResults, "org.Hs.eg.db", "ENSEMBL"))
+  } else {
+    genesWithFoldChanges = setNames(foldChange,genes)
+    heatplot(setReadable(geneOntologyResults, "org.Hs.eg.db", "ENSEMBL"), foldChange = genesWithFoldChanges)
+  }
+  
+}
+
+generateDotPlot = function(genes, geneOntologyCategory) {
+  geneOntologyResults = enrichGO(genes, 'org.Hs.eg.db',
+                                 keyType = "ENSEMBL", ont=geneOntologyCategory, pvalueCutoff = 0.1)
+  dotplot(geneOntologyResults)
+}
+
+for (i in 1:length(tumorIDs)) {
+  
+  #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
+  if (file.exists(paste0("SavedData/DESeqRefinedData/",tumorIDs[i]))) {
+    
+    #Load in data
+    load(paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT2.rda"))
+    load(paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T2vsT3.rda"))
+    load(paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT3.rda"))
+    
+    #Find genes that increase in expression at each increase in tumor size.
+    consistentGrowth = merge(T1vsT2[log2FoldChange<0],T2vsT3[log2FoldChange<0],by = "Gene",
+                             suffixes = c("T1vsT2","T2vsT3"))
+    
+    #Sanity Check
+    if(length(intersect(consistentGrowth[,Gene],T1vsT3[,Gene])) != length(consistentGrowth)) {
+      print("A gene in the set T1vsT3 (Increased expression) is not found in the intersection between
+            T1vsT2 and T2vsT3 (Also increased expression) This should be impossible...")
+    }
+    
+    #Find genes that increase in expression from T1 to T3, but do something weird inbetween...
+    inconsistentGrowth = setdiff(T1vsT3[log2FoldChange<0],consistentGrowth)
+    
+    #These genes increase in expression very slowly, or only between T2 and T3.
+    veryGradualOrLateGrowth = inconsistentGrowth[!(Gene %in% T1vsT2[log2FoldChange>0])]
+    #These genes are expressed less in T2 tumors but more in T3 tumors! (Compared to T1)
+    T2IndependentGrowth = inconsistentGrowth[(Gene %in% T1vsT2[log2FoldChange>0])]
+  
+    #These genes are expressed highly in T2 tumors, but expression is brought back down in T3 tumors.
+    earlyGrowth = merge(T1vsT2[log2FoldChange<0],T2vsT3[log2FoldChange>0],
+                        suffixes = c("T1vsT2","T2vsT3"))
+   
+    #Save the results.
+    save(consistentGrowth, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/consistentGrowth.rda"))
+    save(veryGradualOrLateGrowth, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/verGradualOrLateGrowth.rda"))
+    save(T2IndependentGrowth, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T2IndependentGrowth.rda"))
+    save(earlyGrowth, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/earlyGrowth.rda"))
+    
+    #Generate dotplots.
+    generateDotPlot(consistentGrowth[,Gene],"BP")
+    generateDotPlot(veryGradualOrLateGrowth[,Gene],"BP")
+    generateDotPlot(T2IndependentGrowth[,Gene],"BP")
+    generateDotPlot(earlyGrowth[,Gene],"BP")
+    
+    #Generate heatmaps.
+    generateHeatMap(consistentGrowth[,Gene],T1vsT3[Gene %in% consistentGrowth[,Gene],log2FoldChange])
+    generateHeatMap(veryGradualOrLateGrowth[,Gene],T1vsT3[Gene %in% veryGradualOrLateGrowth[,Gene],log2FoldChange])
+    generateHeatMap(T2IndependentGrowth[,Gene])
+    generateHeatMap(earlyGrowth[,Gene])
+    
+  }
+  
+}
 
 ##### Analyze Results Across Tumor Types ######
 
@@ -337,4 +411,87 @@ setorder(intersectionFrequencyTable,-Count)
 #Save the result
 save(intersectionFrequencyTable, file = "SavedData/DESeqRefinedData/IntersectionFrequencyTable.rda")
 
+##### Experimenting... #####
+
+genesWithFoldChanges = setNames(T1vsT2IntersectT1vsT3[,T1vsT2.log2FoldChange],T1vsT2IntersectT1vsT3[,Gene])
+
+#hgnc_symbol?
+ensembl = useMart("ensembl",dataset="hsapiens_gene_ensembl")
+geneInfo = as.data.table(getBM(attributes=c('ensembl_gene_id','hgnc_symbol', 'description'),
+                  filters = "ensembl_gene_id",
+                  values = T1vsT2IntersectT1vsT3[,Gene], 
+                  mart = ensembl))
+
+geneInfo = as.data.table(getBM(attributes=c('ensembl_gene_id','hgnc_symbol', 'description'),
+                  filters = "hgnc_symbol",
+                  values = "LACRT", 
+                  mart = ensembl))
+T1Mean = colMeans(sizeAndExpressionData[stage_event_tnm_categories == "T1", 
+                                        geneInfo[,ensembl_gene_id], with = FALSE])
+T2Mean = colMeans(sizeAndExpressionData[stage_event_tnm_categories == "T2", 
+                                        geneInfo[,ensembl_gene_id], with = FALSE])
+T3Mean = colMeans(sizeAndExpressionData[stage_event_tnm_categories == "T3", 
+                                        geneInfo[,ensembl_gene_id], with = FALSE])
+T1vsT3[Gene == geneInfo[,ensembl_gene_id],log2FoldChange]
+log(T1Mean/T3Mean,2)
+T1vsT3[Gene == geneInfo[,ensembl_gene_id],baseMean]
+colMeans(sizeAndExpressionData[,geneInfo[,ensembl_gene_id], with = FALSE])
+#Normalizing for sequence depth?
+
+GOInfo = as.data.table(getBM(attributes=c('ensembl_gene_id',"go_id"),
+                              filters = "ensembl_gene_id",
+                              values = T1vsT2IntersectT1vsT3[,Gene], 
+                              mart = ensembl))
+GOTerms = Term(GOTERM)
+GOTerms = data.table(GOID = names(GOTerms), GODescription = GOTerms)
+GOInfo = merge(GOInfo,GOTerms,by.x = "go_id",by.y = "GOID")
+
+GOInfo = as.data.table(getBM(attributes=c('ensembl_gene_id',"go_id"),
+                             filters = c("ensembl_gene_id","go_id"),
+                             values = intersectionFrequencyTable[Count >= 4,Gene], 
+                             mart = ensembl))
+GOInfo = merge(GOInfo,GOTerms,by.x = "go_id",by.y = "GOID")
+
+spindleGenes = GOInfo[grepl("spindle", GOInfo[,GODescription])]
+mitoticGenes = GOInfo[grepl("mitotic|mitosis", GOInfo[,GODescription])]
+
+clinical = clinical[grepl("T1|T2|T3", clinical[,stage_event_tnm_categories])]
+
+test = bitr(T1vsT2IntersectT1vsT3[,Gene], fromType = "ENSEMBL",
+            toType = c("ENTREZID", "SYMBOL"), OrgDb = org.Hs.eg.db)
+
+test = enrichGO(T1vsT2IntersectT1vsT3[,Gene], 'org.Hs.eg.db',
+                keyType = "ENSEMBL", ont="BP", pvalueCutoff=0.05)
+barplot(test)
+testTable = as.data.table(test)
+
+test2 = enrichGO(T1vsT2IntersectT1vsT3[,Gene], 'org.Hs.eg.db',
+                 keyType = "ENSEMBL", ont="BP", pvalueCutoff=0.1)
+barplot(test2)
+testTable2 = as.data.table(test2)
+
+# Doesn't Work?
+test3 = gseGO(T1vsT2IntersectT1vsT3[order(-Gene),Gene], OrgDb = 'org.Hs.eg.db',
+              keyType = "ENSEMBL", ont="BP", pvalueCutoff=1)
+barplot(test3)
+testTable2 = as.data.table(test3)
+
+test4 = enrichGO(T1vsT2IntersectT1vsT3[,Gene], 'org.Hs.eg.db',
+                 keyType = "ENSEMBL", ont="MF", pvalueCutoff=0.1)
+barplot(test4)
+testTable2 = as.data.table(test4)
+
+test5 = setReadable(test4, 'org.Hs.eg.db', 'ENSEMBL')
+cnetplot(test5, foldChange = genesWithFoldChanges, circular = TRUE, colorEdge = TRUE)
+heatplot(test5, foldChange = genesWithFoldChanges)
+
+geneOntologyResults = enrichGO(veryGradualOrLateGrowth[,Gene], 'org.Hs.eg.db', 
+                               keyType = "ENSEMBL", ont="CC", pvalueCutoff = 0.1)
+dotplot(geneOntologyResults)
+genesWithFoldChanges = setNames(T1vsT2IntersectT1vsT3[,T1vsT2.log2FoldChange],T1vsT2IntersectT1vsT3[,Gene])
+heatplot(setReadable(geneOntologyResults, "org.Hs.eg.db", "ENSEMBL"), foldChange = genesWithFoldChanges)
+
+results
+
 # DAVID? Cluster Profiler?  GG Plot?  SEUART?
+# Biomart for converting to gene name/description
