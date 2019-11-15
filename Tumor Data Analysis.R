@@ -27,6 +27,8 @@ library(data.table)
 library(org.Hs.eg.db)
 library(biomaRt)
 library(GO.db)
+library(ggplot2)
+library(edgeR)
 
 #Ensure arallelization
 library(BiocParallel)
@@ -225,6 +227,54 @@ for (i in 1:length(tumorIDs)) {
 
 
 
+##### Set up for Limma-Voom #####
+
+#Create the necessary directory for saving data.
+dir.create("SavedData/LimmaVoomRawData")
+
+for (i in 1:length(tumorIDs)) {
+  
+  #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
+  if (file.exists(paste0("SavedData/SizeAndGeneExpression/TCGA-",tumorIDs[i],"-CGE.rda"))) {
+    
+    # Load in Data
+    load(paste0("SavedData/SizeAndGeneExpression/TCGA-",tumorIDs[i],"-CGE.rda"))
+    
+    # Split up the data
+    sizeData = sizeAndExpressionData[,.(bcr_patient_barcode,stage_event_tnm_categories)]
+    expressionData = sizeAndExpressionData[,!"stage_event_tnm_categories"]
+    
+    # Re-Transpose expression data to traditional "counts" structure.
+    expressionData = melt(expressionData, id.vars = "bcr_patient_barcode", 
+                          variable.name = "Gene", value.name = "Counts")
+    expressionData = dcast(expressionData, Gene ~ bcr_patient_barcode, value.var = "Counts")
+    
+    # Derive normalization factors.
+    dgeList = DGEList(expressionData[,-1], group = as.vector(sizeData[,stage_event_tnm_categories]))
+    normalizedData = calcNormFactors(dgeList)
+    
+    # Filter out low expressed genes
+    normalizedAndTrimmedData = normalizedData[filterByExpr(normalizedData,),]
+    
+    # Apply the voom transformation
+    voomModel = model.matrix(~0 + sizeData[,stage_event_tnm_categories])
+    voomResults = voom(normalizedAndTrimmedData,voomModel,plot = TRUE)
+    
+    #
+    
+    save(DESeqData, file = paste0("SavedData/LimmaVoomRawData/TCGA-",tumorIDs[i],"-LVD.rda"))
+    
+  }
+  
+}
+
+
+
+##### Run Limma-Voom #####
+
+
+
+
 ##### Refine Results #####
 
 # Create the necessary Directory for saving data.
@@ -304,10 +354,15 @@ generateHeatMap = function(genes, geneOntologyCategory, foldChange) {
   
 }
 
-generateDotPlot = function(genes, geneOntologyCategory) {
+generateDotPlot = function(genes, geneOntologyCategory,title) {
   geneOntologyResults = enrichGO(genes, 'org.Hs.eg.db',
                                  keyType = "ENSEMBL", ont=geneOntologyCategory, pvalueCutoff = 0.1)
-  dotplot(geneOntologyResults)
+  if(missing(title)) {
+    dotplot(geneOntologyResults)
+  } else {
+    dotplot(geneOntologyResults) + ggtitle(title)
+  }
+  
 }
 
 for (i in 1:length(tumorIDs)) {
@@ -350,14 +405,16 @@ for (i in 1:length(tumorIDs)) {
     
     #Generate dotplots.
     generateDotPlot(consistentGrowth[,Gene],"BP")
-    generateDotPlot(veryGradualOrLateGrowth[,Gene],"BP")
+    generateDotPlot(veryGradualOrLateGrowth[,Gene],"BP",paste0(tumorIDs[i]," Gradual/Late Growth"))
     generateDotPlot(T2IndependentGrowth[,Gene],"BP")
     generateDotPlot(earlyGrowth[,Gene],"BP")
     
     #Generate heatmaps.
-    generateHeatMap(consistentGrowth[,Gene],T1vsT3[Gene %in% consistentGrowth[,Gene],log2FoldChange])
-    generateHeatMap(veryGradualOrLateGrowth[,Gene],T1vsT3[Gene %in% veryGradualOrLateGrowth[,Gene],log2FoldChange])
-    generateHeatMap(T2IndependentGrowth[,Gene])
+    generateHeatMap(consistentGrowth[,Gene], "BP",
+                    T1vsT3[Gene %in% consistentGrowth[,Gene],-log2FoldChange])
+    generateHeatMap(veryGradualOrLateGrowth[,Gene], "BP", 
+                    T1vsT3[Gene %in% veryGradualOrLateGrowth[,Gene],-log2FoldChange])
+    generateHeatMap(T2IndependentGrowth[,Gene], "BP",)
     generateHeatMap(earlyGrowth[,Gene])
     
   }
@@ -413,9 +470,10 @@ save(intersectionFrequencyTable, file = "SavedData/DESeqRefinedData/Intersection
 
 ##### Experimenting... #####
 
+#Converting to named vector
 genesWithFoldChanges = setNames(T1vsT2IntersectT1vsT3[,T1vsT2.log2FoldChange],T1vsT2IntersectT1vsT3[,Gene])
 
-#hgnc_symbol?
+#Converting between gene identifiers
 ensembl = useMart("ensembl",dataset="hsapiens_gene_ensembl")
 geneInfo = as.data.table(getBM(attributes=c('ensembl_gene_id','hgnc_symbol', 'description'),
                   filters = "ensembl_gene_id",
@@ -426,6 +484,8 @@ geneInfo = as.data.table(getBM(attributes=c('ensembl_gene_id','hgnc_symbol', 'de
                   filters = "hgnc_symbol",
                   values = "LACRT", 
                   mart = ensembl))
+
+#Checking counts
 T1Mean = colMeans(sizeAndExpressionData[stage_event_tnm_categories == "T1", 
                                         geneInfo[,ensembl_gene_id], with = FALSE])
 T2Mean = colMeans(sizeAndExpressionData[stage_event_tnm_categories == "T2", 
@@ -436,8 +496,15 @@ T1vsT3[Gene == geneInfo[,ensembl_gene_id],log2FoldChange]
 log(T1Mean/T3Mean,2)
 T1vsT3[Gene == geneInfo[,ensembl_gene_id],baseMean]
 colMeans(sizeAndExpressionData[,geneInfo[,ensembl_gene_id], with = FALSE])
-#Normalizing for sequence depth?
 
+#Normalizing for sequence depth
+normalizedCounts = as.data.table(counts(DESeqResults, normalized = TRUE))
+normalizedCounts[,Gene := colnames(sizeAndExpressionData)[-(1:2)]]
+normalizedCounts = melt(normalizedCounts, id.vars = "Gene", variable.name = "Patient_Barcode", value.name = "Counts")
+normalizedCounts = dcast(normalizedCounts, Patient_Barcode ~ Gene, value.var = "Counts")
+normalizedCounts[,Size := sizeAndExpressionData[,stage_event_tnm_categories]]
+
+#Analyzing gene ontology info
 GOInfo = as.data.table(getBM(attributes=c('ensembl_gene_id',"go_id"),
                               filters = "ensembl_gene_id",
                               values = T1vsT2IntersectT1vsT3[,Gene], 
@@ -455,8 +522,8 @@ GOInfo = merge(GOInfo,GOTerms,by.x = "go_id",by.y = "GOID")
 spindleGenes = GOInfo[grepl("spindle", GOInfo[,GODescription])]
 mitoticGenes = GOInfo[grepl("mitotic|mitosis", GOInfo[,GODescription])]
 
-clinical = clinical[grepl("T1|T2|T3", clinical[,stage_event_tnm_categories])]
 
+#Messing around with clusterprofiler
 test = bitr(T1vsT2IntersectT1vsT3[,Gene], fromType = "ENSEMBL",
             toType = c("ENTREZID", "SYMBOL"), OrgDb = org.Hs.eg.db)
 
@@ -491,7 +558,4 @@ dotplot(geneOntologyResults)
 genesWithFoldChanges = setNames(T1vsT2IntersectT1vsT3[,T1vsT2.log2FoldChange],T1vsT2IntersectT1vsT3[,Gene])
 heatplot(setReadable(geneOntologyResults, "org.Hs.eg.db", "ENSEMBL"), foldChange = genesWithFoldChanges)
 
-results
-
-# DAVID? Cluster Profiler?  GG Plot?  SEUART?
-# Biomart for converting to gene name/description
+# SEUART? Limma-Voom?
