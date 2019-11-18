@@ -36,6 +36,9 @@ vignettes/*.pdf
 *.utf8.md
 *.knit.md
 
+#Saved Figures
+.png
+
 # Data Files
 /SavedData
 /GDCdata
