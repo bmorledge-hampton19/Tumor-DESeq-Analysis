@@ -147,7 +147,7 @@ for (i in 1:length(tumorIDs)) {
 ##### Set up for DESeq #####
 
 #Create the necessary directory for saving data.
-dir.create("SavedData/DESeqRawData")
+dir.create("SavedData/DESeqObjects")
 
 for (i in 1:length(tumorIDs)) {
   
@@ -172,7 +172,7 @@ for (i in 1:length(tumorIDs)) {
                                  design = ~ stage_event_tnm_categories,
                                  tidy = TRUE)
     
-    save(DESeqData, file = paste0("SavedData/DESeqRawData/TCGA-",tumorIDs[i],"-DSD.rda"))
+    save(DESeqData, file = paste0("SavedData/DESeqObjects/TCGA-",tumorIDs[i],"-DSD.rda"))
     
   }
   
@@ -183,7 +183,7 @@ for (i in 1:length(tumorIDs)) {
 for (i in 1:length(tumorIDs)) {
   
   #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
-  if (file.exists(paste0("SavedData/DESeqRawData/TCGA-",tumorIDs[i],"-DSD.rda"))) {
+  if (file.exists(paste0("SavedData/DESeqObjects/TCGA-",tumorIDs[i],"-DSD.rda"))) {
     
     #Load in DESeq Data and clinical data
     load(paste0("SavedData/DESeqData/TCGA-",tumorIDs[i],"-DSD.rda"))
@@ -219,7 +219,7 @@ for (i in 1:length(tumorIDs)) {
     DESeqResults = DESeq(DESeqData,parallel = TRUE, BPPARAM = SnowParam(7))
     
     #Save the results
-    save(DESeqResults, file = paste0("SavedData/DESeqRawData/TCGA-",tumorIDs[i],"-DSR.rda"))
+    save(DESeqResults, file = paste0("SavedData/DESeqObjects/TCGA-",tumorIDs[i],"-DSR.rda"))
   
   }
   
@@ -277,11 +277,12 @@ for (i in 1:length(tumorIDs)) {
 
 ##### Refine Results #####
 
-# Create the necessary Directory for saving data.
+# Create the necessary Directorys for saving data.
+dir.create("SavedData/DESeqRawData")
 dir.create("SavedData/DESeqRefinedData")
 
 # A nice function for creating results from different comparisons
-createRefinedResultsTable = function(DESeqResults, genes, size1, size2) {
+createResultsTable = function(DESeqResults, genes, size1, size2) {
   
   #Get the results for the indicated comparison
   results = results(DESeqResults, contrast = c("stage_event_tnm_categories",size1,size2), 
@@ -292,7 +293,7 @@ createRefinedResultsTable = function(DESeqResults, genes, size1, size2) {
   setcolorder(DESeqResultsTable,c(7,1:6))
   
   #Remove insignificant changes and small changes.
-  DESeqResultsTable = DESeqResultsTable[padj < 0.05 & abs(log2FoldChange) > 0.58]
+  DESeqResultsTable = DESeqResultsTable[abs(log2FoldChange) > 0.58]
   
   return(DESeqResultsTable)
   
@@ -301,16 +302,16 @@ createRefinedResultsTable = function(DESeqResults, genes, size1, size2) {
 for (i in 1:length(tumorIDs)) {
   
   #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
-  if (file.exists(paste0("SavedData/DESeqRawData/TCGA-",tumorIDs[i],"-DSR.rda"))) {
+  if (file.exists(paste0("SavedData/DESeqObjects/TCGA-",tumorIDs[i],"-DSR.rda"))) {
     
     #Load in DESeq Results
-    load(paste0("SavedData/DESeqRawData/TCGA-",tumorIDs[i],"-DSR.rda"))
+    load(paste0("SavedData/DESeqObjects/TCGA-",tumorIDs[i],"-DSR.rda"))
     load(paste0("SavedData/SizeAndGeneExpression/TCGA-",tumorIDs[i],"-CGE.rda"))
     
     #Create the comparison tables
-    T1vsT2 = createRefinedResultsTable(DESeqResults, colnames(sizeAndExpressionData)[-(1:2)], "T1", "T2")
-    T1vsT3 = createRefinedResultsTable(DESeqResults, colnames(sizeAndExpressionData)[-(1:2)], "T1", "T3")
-    T2vsT3 = createRefinedResultsTable(DESeqResults, colnames(sizeAndExpressionData)[-(1:2)], "T2", "T3")
+    T1vsT2 = createResultsTable(DESeqResults, colnames(sizeAndExpressionData)[-(1:2)], "T1", "T2")
+    T1vsT3 = createResultsTable(DESeqResults, colnames(sizeAndExpressionData)[-(1:2)], "T1", "T3")
+    T2vsT3 = createResultsTable(DESeqResults, colnames(sizeAndExpressionData)[-(1:2)], "T2", "T3")
     
     #Intersect T1vsT2 and T1vsT3 to get the genes that are consistently differentially expressed in large tumors.
     setkey(T1vsT2,Gene)
@@ -326,12 +327,13 @@ for (i in 1:length(tumorIDs)) {
       setnames(T1vsT2IntersectT1vsT3,old = X, new = paste0("T1vsT3",substr(X,2,1000)))))
     
     #Create a sub-directory to save the tables in.
+    dir.create(paste0("SavedData/DESeqRawData/",tumorIDs[i]))
     dir.create(paste0("SavedData/DESeqRefinedData/",tumorIDs[i]))
     
     #Save the tables
-    save(T1vsT2, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT2.rda"))
-    save(T1vsT3, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT3.rda"))
-    save(T2vsT3, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T2vsT3.rda"))
+    save(T1vsT2, file = paste0("SavedData/DESeqRawData/",tumorIDs[i],"/T1vsT2.rda"))
+    save(T1vsT3, file = paste0("SavedData/DESeqRawData/",tumorIDs[i],"/T1vsT3.rda"))
+    save(T2vsT3, file = paste0("SavedData/DESeqRawData/",tumorIDs[i],"/T2vsT3.rda"))
     save(T1vsT2IntersectT1vsT3, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT2_Intersect_T1vsT3.rda"))
     
   }
