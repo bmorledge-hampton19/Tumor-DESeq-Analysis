@@ -17,6 +17,7 @@ BiocManager::install("TCGAbiolinks")
 BiocManager::install("DESeq2")
 BiocManager::install("clusterProfiler")
 BiocManager::install("org.Hs.eg.db")
+BiocManager::install("metaseqR")
 
 #Include libraries
 library(TCGAbiolinks)
@@ -29,6 +30,7 @@ library(biomaRt)
 library(GO.db)
 library(ggplot2)
 library(edgeR)
+library(metaseqR)
 
 #Ensure arallelization
 library(BiocParallel)
@@ -227,9 +229,10 @@ for (i in 1:length(tumorIDs)) {
 
 
 
-##### Set up for Limma-Voom #####
+##### Limma-Voom #####
 
-#Create the necessary directory for saving data.
+#Create the necessary directorys for saving data.
+dir.create("SavedData/LimmaVoomObjects")
 dir.create("SavedData/LimmaVoomRawData")
 
 for (i in 1:length(tumorIDs)) {
@@ -248,21 +251,51 @@ for (i in 1:length(tumorIDs)) {
     expressionData = melt(expressionData, id.vars = "bcr_patient_barcode", 
                           variable.name = "Gene", value.name = "Counts")
     expressionData = dcast(expressionData, Gene ~ bcr_patient_barcode, value.var = "Counts")
+    setkey(expressionData,Gene)
     
     # Derive normalization factors.
-    dgeList = DGEList(expressionData[,-1], group = as.vector(sizeData[,stage_event_tnm_categories]))
+    dgeList = DGEList(as.matrix(expressionData, rownames = TRUE), 
+                      group = as.vector(sizeData[,stage_event_tnm_categories]))
     normalizedData = calcNormFactors(dgeList)
     
     # Filter out low expressed genes
     normalizedAndTrimmedData = normalizedData[filterByExpr(normalizedData,),]
     
     # Apply the voom transformation
-    voomModel = model.matrix(~0 + sizeData[,stage_event_tnm_categories])
+    tumorSizes = sizeData[,stage_event_tnm_categories]
+    voomModel = model.matrix(~0 + tumorSizes)
     voomResults = voom(normalizedAndTrimmedData,voomModel,plot = TRUE)
     
-    #
+    # Use Limma to fit the linear model (and save it)
+    limmaFit = lmFit(voomResults,voomModel)
+    save(limmaFit, file = paste0("SavedData/LimmaVoomObjects/TCGA-",tumorIDs[i],"-LFit.rda"))
     
-    save(DESeqData, file = paste0("SavedData/LimmaVoomRawData/TCGA-",tumorIDs[i],"-LVD.rda"))
+    # Create the contrasts we want to analyze.
+    T1vsT2Contr = makeContrasts(tumorSizesT1 - tumorSizesT2, levels = colnames(coef(limmaFit)))
+    T1vsT3Contr = makeContrasts(tumorSizesT1 - tumorSizesT3, levels = colnames(coef(limmaFit)))
+    T2vsT3Contr = makeContrasts(tumorSizesT2 - tumorSizesT3, levels = colnames(coef(limmaFit)))
+    
+    # Get the results (smoothed using empirical Bayes)
+    T1vsT2 = topTable((eBayes(contrasts.fit(limmaFit, T1vsT2Contr))), 
+                      sort.by = "none", number = Inf)
+    T1vsT3 = topTable((eBayes(contrasts.fit(limmaFit, T1vsT3Contr))), 
+                      sort.by = "none", number = Inf)
+    T2vsT3 = topTable((eBayes(contrasts.fit(limmaFit, T2vsT3Contr))), 
+                      sort.by = "none", number = Inf)
+    
+    
+    # Convert the results to neat and tidy data.tables, removing genes with low changes in expression
+    T1vsT2 = as.data.table(T1vsT2[abs(T1vsT2[,"logFC"]) > 0.58,], keep.rownames = "Gene")
+    T1vsT3 = as.data.table(T1vsT3[abs(T1vsT2[,"logFC"]) > 0.58,], keep.rownames = "Gene")
+    T2vsT3 = as.data.table(T2vsT3[abs(T1vsT2[,"logFC"]) > 0.58,], keep.rownames = "Gene")
+
+    #Create a sub-directory to save the tables in.
+    dir.create(paste0("SavedData/LimmaVoomRawData/",tumorIDs[i]))
+    
+    #Save the tables
+    save(T1vsT2, file = paste0("SavedData/LimmaVoomRawData/",tumorIDs[i],"/T1vsT2.rda"))
+    save(T1vsT3, file = paste0("SavedData/LimmaVoomRawData/",tumorIDs[i],"/T1vsT3.rda"))
+    save(T2vsT3, file = paste0("SavedData/LimmaVoomRawData/",tumorIDs[i],"/T2vsT3.rda"))
     
   }
   
@@ -275,7 +308,7 @@ for (i in 1:length(tumorIDs)) {
 
 
 
-##### Refine Results #####
+##### Extract DESeq Results #####
 
 # Create the necessary Directorys for saving data.
 dir.create("SavedData/DESeqRawData")
@@ -356,7 +389,7 @@ generateHeatMap = function(genes, geneOntologyCategory, foldChange) {
   
 }
 
-generateDotPlot = function(genes, geneOntologyCategory,title) {
+generateDotPlot = function(genes, geneOntologyCategory, title) {
   geneOntologyResults = enrichGO(genes, 'org.Hs.eg.db',
                                  keyType = "ENSEMBL", ont=geneOntologyCategory, pvalueCutoff = 0.1)
   if(missing(title)) {
@@ -370,16 +403,19 @@ generateDotPlot = function(genes, geneOntologyCategory,title) {
 for (i in 1:length(tumorIDs)) {
   
   #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
-  if (file.exists(paste0("SavedData/DESeqRefinedData/",tumorIDs[i]))) {
+  if (file.exists(paste0("SavedData/DESeqRawData/",tumorIDs[i]))) {
     
     #Load in data
-    load(paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT2.rda"))
-    load(paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T2vsT3.rda"))
-    load(paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT3.rda"))
+    load(paste0("SavedData/DESeqRawData/",tumorIDs[i],"/T1vsT2.rda"))
+    load(paste0("SavedData/DESeqRawData/",tumorIDs[i],"/T2vsT3.rda"))
+    load(paste0("SavedData/DESeqRawData/",tumorIDs[i],"/T1vsT3.rda"))
     
     #Find genes that increase in expression at each increase in tumor size.
     consistentGrowth = merge(T1vsT2[log2FoldChange<0],T2vsT3[log2FoldChange<0],by = "Gene",
                              suffixes = c("T1vsT2","T2vsT3"))
+    combinedStatistic = as.data.table(fisher.method(consistentGrowth[,.(pvalueT1vsT2,pvalueT2vsT3)]))
+    consistentGrowth[,c("combinedPValue","combinedPAdj") := combinedStatistic[,.(p.value,p.adj)]]
+    test = consistentGrowth[,.(pvalueT1vsT2,pvalueT2vsT3,combinedPValue,combinedPAdj)]
     
     #Sanity Check
     if(length(intersect(consistentGrowth[,Gene],T1vsT3[,Gene])) != length(consistentGrowth)) {
