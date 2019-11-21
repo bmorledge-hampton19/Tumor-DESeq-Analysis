@@ -321,12 +321,23 @@ for (i in 1:length(tumorIDs)) {
     normalizedData = calcNormFactors(dgeList)
     
     # Filter out low expressed genes
-    normalizedAndTrimmedData = normalizedData[filterByExpr(normalizedData,),] #Filter by > 1/2 have cpm > .2
+    normalizedAndTrimmedData = normalizedData[filterByExpr(normalizedData,),]
     
     # Apply the voom transformation
     tumorSizes = sizeData[,stage_event_tnm_categories]
     voomModel = model.matrix(~0 + tumorSizes)
-    voomResults = voom(normalizedAndTrimmedData,voomModel,plot = TRUE)
+    voomResults = voom(normalizedAndTrimmedData,voomModel,plot = FALSE)
+    
+    # TESTS
+    #trimmedByOneFifth = apply(cpm(normalizedData), 1, function(x) sum(x>0.25)>dim(normalizedData)[2]/2)
+    #trimmedByOneFifth = normalizedData[trimmedByOneFifth,]
+    #voom(trimmedByOneFifth,voomModel,plot = TRUE)
+    #
+    #trimmedBy1 = apply(cpm(normalizedData), 1, function(x) sum(x>1)>dim(normalizedData)[2]/2)
+    #trimmedBy1 = normalizedData[trimmedBy1,]
+    #voom(trimmedBy1,voomModel,plot = TRUE)
+    
+    
     
     # Use Limma to fit the linear model (and save it)
     limmaFit = lmFit(voomResults,voomModel)
@@ -346,7 +357,7 @@ for (i in 1:length(tumorIDs)) {
                       sort.by = "none", number = Inf)
     
     
-    # Convert the results to neat and tidy data.tables, removing genes with low changes in expression
+    # Convert the results to neat and tidy data.tables.
     T1vsT2 = as.data.table(T1vsT2, keep.rownames = "Gene")
     T1vsT3 = as.data.table(T1vsT3, keep.rownames = "Gene")
     T2vsT3 = as.data.table(T2vsT3, keep.rownames = "Gene")
