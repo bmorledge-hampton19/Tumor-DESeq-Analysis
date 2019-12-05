@@ -193,7 +193,7 @@ for (i in 1:length(tumorIDs)) {
   if (file.exists(paste0("SavedData/DESeqObjects/TCGA-",tumorIDs[i],"-DSD.rda"))) {
     
     #Load in DESeq Data and clinical data
-    load(paste0("SavedData/DESeqData/TCGA-",tumorIDs[i],"-DSD.rda"))
+    load(paste0("SavedData/DESeqObjects/TCGA-",tumorIDs[i],"-DSD.rda"))
     load(paste0("SavedData/Clinical/TCGA-",tumorIDs[i],"-C.rda"))
     
     #Get just the patient barcodes from each set.
@@ -217,10 +217,10 @@ for (i in 1:length(tumorIDs)) {
 for (i in 1:length(tumorIDs)) {
   
   #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
-  if (file.exists(paste0("SavedData/DESeqData/TCGA-",tumorIDs[i],"-DSD.rda"))) {
+  if (file.exists(paste0("SavedData/DESeqObjects/TCGA-",tumorIDs[i],"-DSD.rda"))) {
   
     #Load in DESeq Data
-    load(paste0("SavedData/DESeqData/TCGA-",tumorIDs[i],"-DSD.rda"))
+    load(paste0("SavedData/DESeqObjects/TCGA-",tumorIDs[i],"-DSD.rda"))
     
     #Run it!
     DESeqResults = DESeq(DESeqData,parallel = TRUE, BPPARAM = SnowParam(7))
