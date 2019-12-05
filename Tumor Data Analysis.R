@@ -167,12 +167,17 @@ for (i in 1:length(tumorIDs)) {
     expressionData = melt(expressionData, id.vars = "bcr_patient_barcode", 
                           variable.name = "Gene", value.name = "Counts")
     expressionData = dcast(expressionData, Gene ~ bcr_patient_barcode, value.var = "Counts")
+
+    # Filter out lowly expressed Genes
+    expressionData = expressionData[filterByExpr(expressionData[,-1], group = sizeData[,stage_event_tnm_categories])]
+    
+    # Convert to a matrix with row names
+    expressionData = as.matrix(expressionData, rownames = TRUE)
     
     # Create the DESeqDataSet object, and save it.
     DESeqData = DESeqDataSetFromMatrix(countData = expressionData, 
                                  colData = sizeData, 
-                                 design = ~ stage_event_tnm_categories,
-                                 tidy = TRUE)
+                                 design = ~ stage_event_tnm_categories)
     
     save(DESeqData, file = paste0("SavedData/DESeqObjects/TCGA-",tumorIDs[i],"-DSD.rda"))
     
@@ -356,11 +361,20 @@ for (i in 1:length(tumorIDs)) {
     T2vsT3 = topTable((eBayes(contrasts.fit(limmaFit, T2vsT3Contr))), 
                       sort.by = "none", number = Inf)
     
-    
     # Convert the results to neat and tidy data.tables.
     T1vsT2 = as.data.table(T1vsT2, keep.rownames = "Gene")
     T1vsT3 = as.data.table(T1vsT3, keep.rownames = "Gene")
     T2vsT3 = as.data.table(T2vsT3, keep.rownames = "Gene")
+    
+    # Set keys
+    setkey(T1vsT2,Gene)
+    setkey(T1vsT3,Gene)
+    setkey(T2vsT3,Gene)
+    
+    #Standardize column names with DESeq Data.
+    setnames(T1vsT2,c("logFC","P.Value","adj.P.Val"),c("log2FoldChange","pvalue","padj"))
+    setnames(T1vsT3,c("logFC","P.Value","adj.P.Val"),c("log2FoldChange","pvalue","padj"))
+    setnames(T2vsT3,c("logFC","P.Value","adj.P.Val"),c("log2FoldChange","pvalue","padj"))
 
     #Create a sub-directory to save the tables in.
     dir.create(paste0("SavedData/LimmaVoomRawData/",tumorIDs[i]))
@@ -393,14 +407,44 @@ generateHeatMap = function(genes, geneOntologyCategory, foldChange) {
 }
 
 generateDotPlot = function(genes, geneOntologyCategory, title) {
-  geneOntologyResults = enrichGO(genes, 'org.Hs.eg.db',
-                                 keyType = "ENSEMBL", ont=geneOntologyCategory, pvalueCutoff = 0.1)
+  geneOntologyResults = enrichGO(genes, 'org.Hs.eg.db', pvalueCutoff = 0.5, qvalueCutoff = 0.5, 
+                                 keyType = "ENSEMBL", ont=geneOntologyCategory)
   if(missing(title)) {
-    dotplot(geneOntologyResults)
+    enrichplot::dotplot(geneOntologyResults)
   } else {
-    dotplot(geneOntologyResults) + ggtitle(title)
+    enrichplot::dotplot(geneOntologyResults) + ggtitle(title)
   }
   
+}
+
+generateBiologicallyRelevantResults = function(T1vsT2, T1vsT3, T2vsT3, tumorType, saveFolder) {
+  
+  #Find genes that increase in expression at each increase in tumor size.
+  consistentGrowth = merge(T1vsT2[log2FoldChange<0],T2vsT3[log2FoldChange<0],
+                           suffixes = c("T1vsT2","T2vsT3"))
+  consistentGrowth = filterOnCombinedPAdj(consistentGrowth,consistentGrowth[,.(pvalueT1vsT2,pvalueT2vsT3)])
+  
+  #Find genes that increase in expression from T1 to T3 but were not picked up in "consistentGrowth"
+  lateGrowth = T1vsT3[log2FoldChange<0 & padj<0.05]
+  lateGrowth = lateGrowth[!(Gene %in% consistentGrowth$Gene)]
+  
+  #These genes are expressed highly in T2 tumors, but expression is brought back down in T3 tumors.
+  earlyGrowth = merge(T1vsT2[log2FoldChange<0],T2vsT3[log2FoldChange>0],
+                      suffixes = c("T1vsT2","T2vsT3"))
+  earlyGrowth = filterOnCombinedPAdj(earlyGrowth,earlyGrowth[,.(pvalueT1vsT2,pvalueT2vsT3)])
+  
+  #Save the results.
+  dir.create(paste0("SavedData/", saveFolder, "/", tumorType))
+  save(consistentGrowth, file = paste0("SavedData/", saveFolder, "/",tumorType,"/consistentGrowth.rda"))
+  save(lateGrowth, file = paste0("SavedData/", saveFolder, "/",tumorType,"/lateGrowth.rda"))
+  save(earlyGrowth, file = paste0("SavedData/", saveFolder, "/",tumorType,"/earlyGrowth.rda"))
+  
+}
+
+filterOnCombinedPAdj = function(data, pValues) {
+  combinedStatistic = as.data.table(fisher.method(pValues))
+  data[,c("combinedPValue","combinedPAdj") := combinedStatistic[,.(p.value,p.adj)]]
+  return(data[combinedPAdj<0.05])
 }
 
 for (i in 1:length(tumorIDs)) {
@@ -413,50 +457,20 @@ for (i in 1:length(tumorIDs)) {
     load(paste0("SavedData/DESeqRawData/",tumorIDs[i],"/T2vsT3.rda"))
     load(paste0("SavedData/DESeqRawData/",tumorIDs[i],"/T1vsT3.rda"))
     
-    #Find genes that increase in expression at each increase in tumor size.
-    consistentGrowth = merge(T1vsT2[log2FoldChange<0],T2vsT3[log2FoldChange<0],by = "Gene",
-                             suffixes = c("T1vsT2","T2vsT3"))
-    combinedStatistic = as.data.table(fisher.method(consistentGrowth[,.(pvalueT1vsT2,pvalueT2vsT3)]))
-    consistentGrowth[,c("combinedPValue","combinedPAdj") := combinedStatistic[,.(p.value,p.adj)]]
-    test = consistentGrowth[,.(pvalueT1vsT2,pvalueT2vsT3,combinedPValue,combinedPAdj)]
+    generateBiologicallyRelevantResults(T1vsT2,T1vsT3,T2vsT3,tumorIDs[i],"DESeqRefinedData")
     
-    #Sanity Check
-    if(length(intersect(consistentGrowth[,Gene],T1vsT3[,Gene])) != length(consistentGrowth)) {
-      print("A gene in the set T1vsT3 (Increased expression) is not found in the intersection between
-            T1vsT2 and T2vsT3 (Also increased expression) This should be impossible...")
-    }
+    #Load in data
+    load(paste0("SavedData/LimmaVoomRawData/",tumorIDs[i],"/T1vsT2.rda"))
+    load(paste0("SavedData/LimmaVoomRawData/",tumorIDs[i],"/T2vsT3.rda"))
+    load(paste0("SavedData/LimmaVoomRawData/",tumorIDs[i],"/T1vsT3.rda"))
     
-    #Find genes that increase in expression from T1 to T3, but do something weird inbetween...
-    inconsistentGrowth = setdiff(T1vsT3[log2FoldChange<0],consistentGrowth)
-    
-    #These genes increase in expression very slowly, or only between T2 and T3.
-    veryGradualOrLateGrowth = inconsistentGrowth[!(Gene %in% T1vsT2[log2FoldChange>0])]
-    #These genes are expressed less in T2 tumors but more in T3 tumors! (Compared to T1)
-    T2IndependentGrowth = inconsistentGrowth[(Gene %in% T1vsT2[log2FoldChange>0])]
-  
-    #These genes are expressed highly in T2 tumors, but expression is brought back down in T3 tumors.
-    earlyGrowth = merge(T1vsT2[log2FoldChange<0],T2vsT3[log2FoldChange>0],
-                        suffixes = c("T1vsT2","T2vsT3"))
-   
-    #Save the results.
-    save(consistentGrowth, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/consistentGrowth.rda"))
-    save(veryGradualOrLateGrowth, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/verGradualOrLateGrowth.rda"))
-    save(T2IndependentGrowth, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T2IndependentGrowth.rda"))
-    save(earlyGrowth, file = paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/earlyGrowth.rda"))
+    dir.create("SavedData/LimmaVoomRefinedData")
+    generateBiologicallyRelevantResults(T1vsT2,T1vsT3,T2vsT3,tumorIDs[i],"LimmaVoomRefinedData")
     
     #Generate dotplots.
-    generateDotPlot(consistentGrowth[,Gene],"BP")
-    generateDotPlot(veryGradualOrLateGrowth[,Gene],"BP",paste0(tumorIDs[i]," Gradual/Late Growth"))
-    generateDotPlot(T2IndependentGrowth[,Gene],"BP")
-    generateDotPlot(earlyGrowth[,Gene],"BP")
+    generateDotPlot(consistentGrowth[,Gene],"BP", "DESeq Consistent Growth")
     
     #Generate heatmaps.
-    generateHeatMap(consistentGrowth[,Gene], "BP",
-                    T1vsT3[Gene %in% consistentGrowth[,Gene],-log2FoldChange])
-    generateHeatMap(veryGradualOrLateGrowth[,Gene], "BP", 
-                    T1vsT3[Gene %in% veryGradualOrLateGrowth[,Gene],-log2FoldChange])
-    generateHeatMap(T2IndependentGrowth[,Gene], "BP",)
-    generateHeatMap(earlyGrowth[,Gene])
     
   }
   
