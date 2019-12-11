@@ -1,11 +1,6 @@
-#Need to align gene expression to tumor size using patient barcode.
-#BUT sometimes multiple samples are taken from one patient.
-#Each patient is only associated with at most one tumor size, so those with multiple samples need to be omitted.
-#Also, we only care about tumor sizes T1, T2, and T3.
-#(Thanks Pete!)
-#Then, run DESeq analysis on the data.
-
-
+###############################################################################################
+#####                     Tumor RNA Seq Analysis Based on Size                            #####
+###############################################################################################
 
 ##### Set Up the Environment #####
 
@@ -32,7 +27,7 @@ library(ggplot2)
 library(edgeR)
 library(metaseqR)
 
-#Ensure arallelization
+#Ensure Parallelization
 library(BiocParallel)
 register(SnowParam(7))
 
@@ -419,6 +414,8 @@ generateDotPlot = function(genes, geneOntologyCategory, title) {
 
 generateBiologicallyRelevantResults = function(T1vsT2, T1vsT3, T2vsT3, tumorType, saveFolder) {
   
+  print(paste0("Generating results for ",tumorType," in ",saveFolder,"."))
+  
   #Find genes that increase in expression at each increase in tumor size.
   consistentGrowth = merge(T1vsT2[log2FoldChange<0],T2vsT3[log2FoldChange<0],
                            suffixes = c("T1vsT2","T2vsT3"))
@@ -433,11 +430,43 @@ generateBiologicallyRelevantResults = function(T1vsT2, T1vsT3, T2vsT3, tumorType
                       suffixes = c("T1vsT2","T2vsT3"))
   earlyGrowth = filterOnCombinedPAdj(earlyGrowth,earlyGrowth[,.(pvalueT1vsT2,pvalueT2vsT3)])
   
-  #Save the results.
+  #Give some info...
+  print(paste0("Found ",dim(consistentGrowth)[1]," genes in consistentGrowth."))
+  print(paste0("Found ",dim(lateGrowth)[1]," genes in lateGrowth."))
+  print(paste0("Found ",dim(earlyGrowth)[1]," genes in earlyGrowth."))
+  
+  #Save "binned" results.
   dir.create(paste0("SavedData/", saveFolder, "/", tumorType))
   save(consistentGrowth, file = paste0("SavedData/", saveFolder, "/",tumorType,"/consistentGrowth.rda"))
   save(lateGrowth, file = paste0("SavedData/", saveFolder, "/",tumorType,"/lateGrowth.rda"))
   save(earlyGrowth, file = paste0("SavedData/", saveFolder, "/",tumorType,"/earlyGrowth.rda"))
+  
+  #Generate and save gene ontology info.
+  dir.create(paste0("SavedData/", saveFolder, "/", tumorType, "/GO"))
+  
+  if (dim(consistentGrowth)[1] > 0) {
+    geneOntologyConsistentGrowth = enrichGO(consistentGrowth$Gene, 'org.Hs.eg.db', 
+                                            pvalueCutoff = 0.5, qvalueCutoff = 0.5, 
+                                            keyType = "ENSEMBL", ont="BP")
+    save(geneOntologyConsistentGrowth,
+         file = paste0("SavedData/", saveFolder, "/",tumorType,"/GO/geneOntologyConsistentGrowth.rda"))
+  }
+  
+  if (dim(lateGrowth)[1] > 0) {
+    geneOntologyLateGrowth = enrichGO(lateGrowth$Gene, 'org.Hs.eg.db', 
+                                            pvalueCutoff = 0.5, qvalueCutoff = 0.5, 
+                                            keyType = "ENSEMBL", ont="BP")
+    save(geneOntologyLateGrowth,
+         file = paste0("SavedData/", saveFolder, "/",tumorType,"/GO/geneOntologyLateGrowth.rda"))
+  }
+  
+  if (dim(earlyGrowth)[1] > 0) {
+    geneOntologyEarlyGrowth = enrichGO(earlyGrowth$Gene, 'org.Hs.eg.db', 
+                                            pvalueCutoff = 0.5, qvalueCutoff = 0.5, 
+                                            keyType = "ENSEMBL", ont="BP")
+    save(geneOntologyEarlyGrowth,
+         file = paste0("SavedData/", saveFolder, "/",tumorType,"/GO/geneOntologyEarlyGrowth.rda"))
+  }
   
 }
 
@@ -467,150 +496,174 @@ for (i in 1:length(tumorIDs)) {
     dir.create("SavedData/LimmaVoomRefinedData")
     generateBiologicallyRelevantResults(T1vsT2,T1vsT3,T2vsT3,tumorIDs[i],"LimmaVoomRefinedData")
     
-    #Generate dotplots.
-    generateDotPlot(consistentGrowth[,Gene],"BP", "DESeq Consistent Growth")
-    
-    #Generate heatmaps.
-    
   }
   
 }
 
 ##### Analyze Results Across Tumor Types ######
 
-# Make the base frequency table
-intersectionFrequencyTable = data.table(Gene=character(),Count=integer())
-setkey(intersectionFrequencyTable,Gene)
+###How well do different tumor types bin?
+consistentGrowthCounts = vector()
+lateGrowthCounts = vector()
+earlyGrowthCounts = vector()
 
-# Generate the frequency table
 for (i in 1:length(tumorIDs)) {
   
   #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
-  if (file.exists(paste0("SavedData/DESeqRefinedData/",tumorIDs[i]))) {
+  if (file.exists(paste0("SavedData/LimmaVoomRefinedData/",tumorIDs[i]))) {
     
-    #Load in intersection table
-    load(paste0("SavedData/DESeqRefinedData/",tumorIDs[i],"/T1vsT2_Intersect_T1vsT3.rda"))
+    load(paste0("SavedData/LimmaVoomRefinedData/",tumorIDs[i],"/consistentGrowth.rda"))
+    load(paste0("SavedData/LimmaVoomRefinedData/",tumorIDs[i],"/lateGrowth.rda"))
+    load(paste0("SavedData/LimmaVoomRefinedData/",tumorIDs[i],"/earlyGrowth.rda"))
     
-    #Add any new genes to the frequency table.
-    intersectionFrequencyTable = merge(intersectionFrequencyTable,T1vsT2IntersectT1vsT3[,.(Gene)], all=TRUE)
+    consistentGrowthCounts[tumorIDs[i]] = dim(consistentGrowth)[1]
+    lateGrowthCounts[tumorIDs[i]] = dim(lateGrowth)[1]
+    earlyGrowthCounts[tumorIDs[i]] = dim(earlyGrowth)[1]
     
-    #Increment gene counts based on genes in the current tumor type.
-    intersectionFrequencyTable[intersectionFrequencyTable[,Gene] %in% T1vsT2IntersectT1vsT3[,Gene],
-                               Count := Count + 1]
-    intersectionFrequencyTable[is.na(Count),
-                               Count := 1]
-    
-    #Indicate which genes were found in this tumor type.
-    intersectionFrequencyTable[intersectionFrequencyTable[,Gene] %in% T1vsT2IntersectT1vsT3[,Gene],
-                               tumorIDs[i] := TRUE]
-
-  }
-   
-}
-
-# Replace NA's with FALSE.
-for (i in 1:length(tumorIDs)) {
-  
-  if (tumorIDs[i] %in% colnames(intersectionFrequencyTable)) {
-    intersectionFrequencyTable[is.na(intersectionFrequencyTable[,tumorIDs[i],with = FALSE])[,1],tumorIDs[i] := FALSE]
   }
   
 }
 
-# Order the results by most common genes
-setorder(intersectionFrequencyTable,-Count)
+barplot(consistentGrowthCounts, main = "Consistent Growth Bin Counts")
+barplot(lateGrowthCounts, main = "Late Growth Bin Counts")
+barplot(earlyGrowthCounts, main = "Early Growth Bin Counts")
 
-#Save the result
-save(intersectionFrequencyTable, file = "SavedData/DESeqRefinedData/IntersectionFrequencyTable.rda")
+### What genes do different tumor types have in common between bins?
 
-##### Experimenting... #####
+# Function to return a frequency table based on a particular bin.
+#   parentFolder should be the folder that contains the tumor type folders (e.g. "SavedData/DESeqRefinedData")
+#   bin should be one of the three bins that genes are categorized in, such as "consistentGrowth"
+generateIntersectionFrequencyTable = function(parentFolder, bin) {
+  
+  #Initialize the table
+  intersectionFrequencyTable = data.table(Gene=character(),Count=integer())
+  setkey(intersectionFrequencyTable,Gene)
+  
+  # Generate the frequency table
+  for (i in 1:length(tumorIDs)) {
+  
+    #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
+    if (file.exists(paste0(parentFolder, "/", tumorIDs[i]))) {
+  
+      #Load in the binned data
+      binnedData = get(load(paste0(parentFolder , "/", tumorIDs[i], "/", bin, ".rda")))
+  
+      #Add any new genes to the frequency table.
+      intersectionFrequencyTable = merge(intersectionFrequencyTable,binnedData[,.(Gene)], all=TRUE)
+  
+      #Increment gene counts based on genes in the current tumor type.
+      intersectionFrequencyTable[intersectionFrequencyTable[,Gene] %in% binnedData[,Gene],
+                                 Count := Count + 1]
+      intersectionFrequencyTable[is.na(Count),
+                                 Count := 1]
+  
+      #Indicate which genes were found in this tumor type.
+      intersectionFrequencyTable[intersectionFrequencyTable[,Gene] %in% binnedData[,Gene],
+                                 tumorIDs[i] := TRUE]
+  
+    }
+  
+  }
+  
+  # Replace NA's with FALSE.
+  for (i in 1:length(tumorIDs)) {
+  
+    if (tumorIDs[i] %in% colnames(intersectionFrequencyTable)) {
+      intersectionFrequencyTable[is.na(intersectionFrequencyTable[,tumorIDs[i],with = FALSE])[,1],tumorIDs[i] := FALSE]
+    }
+  
+  }
+  
+  # Order the results by most common genes
+  setorder(intersectionFrequencyTable,-Count)
+  
+  # Return the table.
+  return(intersectionFrequencyTable)
+  
+}
 
-#Converting to named vector
-genesWithFoldChanges = setNames(T1vsT2IntersectT1vsT3[,T1vsT2.log2FoldChange],T1vsT2IntersectT1vsT3[,Gene])
+#Generate the comparison tables
+consistentGrowthComparisonTable = generateIntersectionFrequencyTable("SavedData/LimmaVoomRefinedData","consistentGrowth")
+lateGrowthComparisonTable = generateIntersectionFrequencyTable("SavedData/LimmaVoomRefinedData","lateGrowth")
+earlyGrowthComparisonTable = generateIntersectionFrequencyTable("SavedData/LimmaVoomRefinedData","earlyGrowth")
 
-#Converting between gene identifiers
+#Save the results
+dir.create("SavedData/LimmaVoomRefinedData/ComparisonTables")
+save(consistentGrowthComparisonTable, file = "SavedData/LimmaVoomRefinedData/ComparisonTables/consistentGrowth.rda")
+save(lateGrowthComparisonTable, file = "SavedData/LimmaVoomRefinedData/ComparisonTables/lateGrowth.rda")
+save(earlyGrowthComparisonTable, file = "SavedData/LimmaVoomRefinedData/ComparisonTables/earlyGrowth.rda")
+
+
+
+##### Misc. #####
+
+#Converting to "geneList" format for clusterProfiler
+geneList = setNames(T1vsT3$log2FoldChange,T1vsT2IntersectT1vsT3$Gene)
+geneList = sort(geneList, decreasing = TRUE)
+
+
+### Converting between gene identifiers
 ensembl = useMart("ensembl",dataset="hsapiens_gene_ensembl")
 geneInfo = as.data.table(getBM(attributes=c('ensembl_gene_id','hgnc_symbol', 'description'),
                   filters = "ensembl_gene_id",
                   values = T1vsT2IntersectT1vsT3[,Gene], 
                   mart = ensembl))
 
-geneInfo = as.data.table(getBM(attributes=c('ensembl_gene_id','hgnc_symbol', 'description'),
-                  filters = "hgnc_symbol",
-                  values = "LACRT", 
-                  mart = ensembl))
 
-#Checking counts
-T1Mean = colMeans(sizeAndExpressionData[stage_event_tnm_categories == "T1", 
-                                        geneInfo[,ensembl_gene_id], with = FALSE])
-T2Mean = colMeans(sizeAndExpressionData[stage_event_tnm_categories == "T2", 
-                                        geneInfo[,ensembl_gene_id], with = FALSE])
-T3Mean = colMeans(sizeAndExpressionData[stage_event_tnm_categories == "T3", 
-                                        geneInfo[,ensembl_gene_id], with = FALSE])
-T1vsT3[Gene == geneInfo[,ensembl_gene_id],log2FoldChange]
-log(T1Mean/T3Mean,2)
-T1vsT3[Gene == geneInfo[,ensembl_gene_id],baseMean]
-colMeans(sizeAndExpressionData[,geneInfo[,ensembl_gene_id], with = FALSE])
-
-#Normalizing for sequence depth
-normalizedCounts = as.data.table(counts(DESeqResults, normalized = TRUE))
-normalizedCounts[,Gene := colnames(sizeAndExpressionData)[-(1:2)]]
-normalizedCounts = melt(normalizedCounts, id.vars = "Gene", variable.name = "Patient_Barcode", value.name = "Counts")
-normalizedCounts = dcast(normalizedCounts, Patient_Barcode ~ Gene, value.var = "Counts")
-normalizedCounts[,Size := sizeAndExpressionData[,stage_event_tnm_categories]]
-
-#Analyzing gene ontology info
-GOInfo = as.data.table(getBM(attributes=c('ensembl_gene_id',"go_id"),
-                              filters = "ensembl_gene_id",
-                              values = T1vsT2IntersectT1vsT3[,Gene], 
-                              mart = ensembl))
-GOTerms = Term(GOTERM)
-GOTerms = data.table(GOID = names(GOTerms), GODescription = GOTerms)
-GOInfo = merge(GOInfo,GOTerms,by.x = "go_id",by.y = "GOID")
-
-GOInfo = as.data.table(getBM(attributes=c('ensembl_gene_id',"go_id"),
-                             filters = c("ensembl_gene_id","go_id"),
-                             values = intersectionFrequencyTable[Count >= 4,Gene], 
-                             mart = ensembl))
-GOInfo = merge(GOInfo,GOTerms,by.x = "go_id",by.y = "GOID")
-
-spindleGenes = GOInfo[grepl("spindle", GOInfo[,GODescription])]
-mitoticGenes = GOInfo[grepl("mitotic|mitosis", GOInfo[,GODescription])]
+### How many patients do we have for each tumor type?
+for (i in 1:length(tumorIDs)) {
+  
+  #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
+  if (file.exists(paste0("SavedData/SizeAndGeneExpression/TCGA-",tumorIDs[i],"-CGE.rda"))) {
+    
+    # Load in Data
+    load(paste0("SavedData/SizeAndGeneExpression/TCGA-",tumorIDs[i],"-CGE.rda"))
+    
+    print(paste0(dim(sizeAndExpressionData)[1]," patients in ",tumorIDs[i]))
+    
+  }
+}
 
 
-#Messing around with clusterprofiler
-test = bitr(T1vsT2IntersectT1vsT3[,Gene], fromType = "ENSEMBL",
-            toType = c("ENTREZID", "SYMBOL"), OrgDb = org.Hs.eg.db)
+###Compare sequencing counts for consistent growth genes in BRCA across other tumor types.
 
-test = enrichGO(T1vsT2IntersectT1vsT3[,Gene], 'org.Hs.eg.db',
-                keyType = "ENSEMBL", ont="BP", pvalueCutoff=0.05)
-barplot(test)
-testTable = as.data.table(test)
+#Load in Data
+load("SavedData/LimmaVoomRefinedData/BRCA/consistentGrowth.rda")
 
-test2 = enrichGO(T1vsT2IntersectT1vsT3[,Gene], 'org.Hs.eg.db',
-                 keyType = "ENSEMBL", ont="BP", pvalueCutoff=0.1)
-barplot(test2)
-testTable2 = as.data.table(test2)
+#Get a gene to test from BRCA consistentGrowth.
+sampleGene = consistentGrowth$Gene[1]
 
-# Doesn't Work?
-test3 = gseGO(T1vsT2IntersectT1vsT3[order(-Gene),Gene], OrgDb = 'org.Hs.eg.db',
-              keyType = "ENSEMBL", ont="BP", pvalueCutoff=1)
-barplot(test3)
-testTable2 = as.data.table(test3)
+#Compare across tumor types
+for (i in 1:length(tumorIDs)) {
+  
+  #Ensure that we have data to work with in the first place.  If not, skip this tumor type.
+  if (file.exists(paste0("SavedData/SizeAndGeneExpression/TCGA-",tumorIDs[i],"-CGE.rda"))) {
+    
+    # Load in Data
+    load(paste0("SavedData/SizeAndGeneExpression/TCGA-",tumorIDs[i],"-CGE.rda"))
+    load(paste0("SavedData/LimmaVoomRefinedData/",tumorIDs[i],"/consistentGrowth.rda"))
+    
+    if(sampleGene %in% consistentGrowth$Gene) {
+      print(paste0(tumorIDs[i], " displays consistent growth for gene ", sampleGene))
+    }
+    
+    sizes = as.factor(sizeAndExpressionData$stage_event_tnm_categories)
+    boxplot(log2(sizeAndExpressionData[[sampleGene]]) ~sizes, main = tumorIDs[i])
+    
+  }
+}
 
-test4 = enrichGO(T1vsT2IntersectT1vsT3[,Gene], 'org.Hs.eg.db',
-                 keyType = "ENSEMBL", ont="MF", pvalueCutoff=0.1)
-barplot(test4)
-testTable2 = as.data.table(test4)
 
-test5 = setReadable(test4, 'org.Hs.eg.db', 'ENSEMBL')
-cnetplot(test5, foldChange = genesWithFoldChanges, circular = TRUE, colorEdge = TRUE)
-heatplot(test5, foldChange = genesWithFoldChanges)
+### Compare Prostate Data to BRCA data
+# Load in data
+load("PRAD_T1vsT3.rda")
+load("SavedData/LimmaVoomRawData/BRCA/T1vsT3.rda")
 
-geneOntologyResults = enrichGO(veryGradualOrLateGrowth[,Gene], 'org.Hs.eg.db', 
-                               keyType = "ENSEMBL", ont="CC", pvalueCutoff = 0.1)
-dotplot(geneOntologyResults)
-genesWithFoldChanges = setNames(T1vsT2IntersectT1vsT3[,T1vsT2.log2FoldChange],T1vsT2IntersectT1vsT3[,Gene])
-heatplot(setReadable(geneOntologyResults, "org.Hs.eg.db", "ENSEMBL"), foldChange = genesWithFoldChanges)
-
-# SEUART? Limma-Voom?
+# Merge on Genes
+PRADT1vsT3 = as.data.table(R_T1_VS_T3)
+setnames(PRADT1vsT3,1,"Gene")
+setkey(PRADT1vsT3,Gene)
+BRCAT1vsT3 = T1vsT3[padj<0.05]
+BRCAIntersectPRADT1vsT3 = merge(PRADT1vsT3,BRCAT1vsT3, suffixes = c("PRAD","BRCA"))
+save(BRCAIntersectPRADT1vsT3,file = "BRCA_vs_PRAD_T1vsT3.rda")
+dim(BRCAIntersectPRADT1vsT3)[1]
