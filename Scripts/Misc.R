@@ -59,14 +59,12 @@ for (i in 1:length(tumorIDs)) {
 
 ### Compare Prostate Data to BRCA data
 # Load in data
-load("PRAD_T1vsT3.rda")
-load("SavedData/LimmaVoomRawData/BRCA/T1vsT3.rda")
+PRADT1vsT3 = get(load("SavedData/LimmaVoomRawData/PRAD/T1vsT3.rda"))
+BRCAT1vsT3 = get(load("SavedData/LimmaVoomRawData/BRCA/T1vsT3.rda"))
 
 # Merge on Genes
-PRADT1vsT3 = as.data.table(R_T1_VS_T3)
-setnames(PRADT1vsT3,1,"Gene")
-setkey(PRADT1vsT3,Gene)
-BRCAT1vsT3 = T1vsT3[padj<0.05]
+PRADT1vsT3 = PRADT1vsT3[padj<0.05]
+BRCAT1vsT3 = BRCAT1vsT3[padj<0.05]
 BRCAIntersectPRADT1vsT3 = merge(PRADT1vsT3,BRCAT1vsT3, suffixes = c("PRAD","BRCA"))
 save(BRCAIntersectPRADT1vsT3,file = "BRCA_vs_PRAD_T1vsT3.rda")
 dim(BRCAIntersectPRADT1vsT3)[1]

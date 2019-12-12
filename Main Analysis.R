@@ -77,3 +77,5 @@ source("Scripts/Perform Biologically Relevant Analysis.R")
 #by the previous script.  It also produces barplots to display how well-represented each category was per tumor type.
 #The results are outputted to the "DESeqRefinedData" and "LimmaVoomRefinedData" folders under the subfolder "ComparisonTables".
 source("Scripts/Analyze Across Tumor Types.R")
+
+#NOTE: If there are any other functions you expect to find here but don't, check the "Misc" script.
